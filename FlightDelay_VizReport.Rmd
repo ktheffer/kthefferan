@@ -1,0 +1,351 @@
+---
+title: "Data Storytelling Project: Operational Drivers of Flight Arrival Delay"
+author: "Kieran Hefferan"
+date: "`5/31/26`"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+    number_sections: yes
+    code_folding: hide
+    theme: lumen
+  pdf_document:
+    toc: yes
+    toc_depth: 4
+    fig_caption: yes
+    number_sections: yes
+  word_document:
+    toc: yes
+    toc_depth: 4
+    fig_caption: yes
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(naniar)
+library(skimr)
+library(GGally)
+library(plotly)
+library(DT)
+library(scales)
+
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6,
+  fig.align = "center"
+)
+
+theme_storytelling <- theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", margin = margin(b = 10)),
+    plot.subtitle = element_text(size = 12, color = "grey40"),
+    axis.title = element_text(size = 11),
+    axis.text = element_text(size = 10),
+    legend.position = "bottom",
+    panel.grid.major = element_line(color = "grey90"),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(20, 20, 20, 20)
+  )
+
+df <- read.csv("C:/Users/Redma/Downloads/Flight_delay-data.csv")
+df$Carrier <- as.factor(df$Carrier)
+```
+
+# Introduction and Motivation
+
+## Background Story and Data Generation Process
+
+This project uses the `flight_delay` dataset to understand which airline operating conditions are associated with longer arrival delays. The data contains 3,593 flight records and 11 variables. The target outcome is `Arr_Delay`, measured in minutes. The predictors include carrier, airport distance, number of flights, weather severity, support crew availability, baggage loading time, late-arriving aircraft time, cleaning time, fueling time, and security checking time.
+
+The dataset appears to have been collected from airport or airline operational records, where each row summarizes the conditions surrounding a flight and the resulting arrival delay. Because the variables describe operational timing and airport workload, the analysis focuses on practical decisions such as staffing, baggage operations, and delay prevention.
+
+**Population**: The target population is flights represented in the dataset. The sampling frame appears to be flight operations with complete carrier, operational timing, and arrival delay information. No records are missing values, so all 3,593 observations are included in the visual analysis.
+
+**Data Dictionary**
+
+```{r}
+data_dictionary <- tribble(
+  ~Variable_Name, ~Description, ~Variable_Type,
+  "Carrier", "Airline carrier code", "Categorical",
+  "Airport_Distance", "Distance between airports in miles", "Numeric",
+  "Number_of_flights", "Total number of flights at the airport", "Numeric",
+  "Weather", "Weather delay condition ranked 0-10, where 0 is mild and 10 is extreme", "Numeric",
+  "Support_Crew_Available", "Total number of support crew available", "Numeric",
+  "Baggage_loading_time", "Time in minutes for loading baggage", "Numeric",
+  "Late_Arrival_o", "Time in minutes for late-arriving aircraft from the same flight sequence", "Numeric",
+  "Cleaning_o", "Time in minutes for aircraft cleaning", "Numeric",
+  "Fueling_o", "Time in minutes for aircraft fueling", "Numeric",
+  "Security_o", "Time in minutes for security checking", "Numeric",
+  "Arr_Delay", "Flight arrival delay in minutes; dependent variable", "Numeric"
+)
+
+datatable(
+  data_dictionary,
+  caption = "Table 1: Variable definitions and types for the flight-delay dataset",
+  rownames = FALSE,
+  options = list(pageLength = 11, dom = "tip")
+)
+```
+
+## Business Questions and Hypotheses
+
+The purpose of this analysis is to answer the following practical questions:
+
+**Business Question 1**: Which operational factors have the strongest relationship with arrival delay?
+
+**Business Question 2**: Do arrival delays differ meaningfully by airline carrier?
+
+**Business Question 3**: Are there data-quality issues, outliers, or unusual values that should be addressed before modeling?
+
+Hypotheses derived from domain knowledge:
+
+**H1**: Flights operating in higher-volume airport conditions will have longer arrival delays.
+
+**H2**: Longer baggage loading time and late-arriving aircraft time will be positively associated with arrival delay.
+
+**H3**: More available support crew will be associated with shorter arrival delays.
+
+# Visual Exploratory Analytic Plan
+
+Before building a model, the analysis first checks data completeness and plausibility, then studies the shape of each variable, and finally examines relationships with the dependent variable `Arr_Delay`. The plan is organized around three phases: data quality, univariate distribution analysis, and bivariate or multivariate relationship analysis.
+
+## Overall Data Inspection: Missing Values and Data Quality
+
+**Goal**: Assess whether the dataset is complete and whether any variables contain implausible values.
+
+## Variable Inspections: Distribution Analysis
+
+**Goal**: Understand the central tendency, spread, skewness, and outliers of each numeric variable, while also checking whether carriers are balanced enough for comparison.
+
+## Relationships Between Variables
+
+**Goal**: Identify the strongest visual and statistical relationships with arrival delay, especially for operational variables that can support business action.
+
+# Effective Visual Design
+
+## Data Quality and Missing Value Assessment
+
+Before interpreting patterns in the data, we first check whether missingness could bias the results. This dataset is complete across all variables, which means the analysis does not require deletion or imputation. The main data-quality concern is not missingness but plausibility: `Cleaning_o` has a minimum of -4 minutes, which is not operationally meaningful and should be investigated or corrected before formal modeling.
+
+```{r}
+missing_summary <- df %>%
+  summarise(across(everything(), ~ mean(is.na(.)) * 100)) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "pct_missing") %>%
+  arrange(desc(pct_missing))
+
+ggplot(missing_summary, aes(x = reorder(variable, pct_missing), y = pct_missing)) +
+  geom_col(fill = "steelblue", alpha = 0.8) +
+  geom_text(aes(label = paste0(round(pct_missing, 1), "%")), hjust = -0.1, size = 3.5) +
+  coord_flip() +
+  scale_y_continuous(limits = c(0, 5)) +
+  labs(
+    title = "Proportion of Missing Values by Variable",
+    subtitle = "All variables are complete; no imputation is required",
+    x = NULL,
+    y = "Percentage Missing (%)"
+  ) +
+  theme_storytelling
+```
+
+**Summary of Observations and Implications**: Every variable has 0% missing values. This is a strong foundation for visualization and modeling because there is no immediate need for missing-value imputation. However, the minimum cleaning time is -4 minutes, so the cleaning variable should be checked against the original source. A negative value could represent a coding issue, early completion relative to schedule, or an error.
+
+```{r}
+df %>%
+  summarise(across(where(is.numeric), list(min = min, median = median, max = max), na.rm = TRUE)) %>%
+  pivot_longer(everything(), names_to = "metric", values_to = "value") %>%
+  datatable(caption = "Table 2: Numeric variable ranges for plausibility checks", rownames = FALSE)
+```
+
+## Univariate Distribution Analysis  
+
+### Distributions of Key Numeric Variables
+
+Understanding numeric distributions helps reveal skewness, outliers, and operational limits. The variables in this dataset are mostly tightly centered, but arrival delays range from 0 to 180 minutes and support crew availability ranges from 0 to 222.
+
+```{r fig.align='center', fig.height=8, fig.width=10}
+df_numeric_long <- df %>%
+  select(where(is.numeric)) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "value")
+
+ggplot(df_numeric_long, aes(x = value)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 35, fill = "skyblue", alpha = 0.65, color = "white") +
+  geom_density(color = "darkblue", linewidth = 0.8) +
+  geom_vline(
+    data = df_numeric_long %>% group_by(variable) %>% summarise(mean = mean(value), median = median(value), .groups = "drop"),
+    aes(xintercept = mean),
+    linetype = "dashed",
+    color = "red",
+    linewidth = 0.7
+  ) +
+  geom_vline(
+    data = df_numeric_long %>% group_by(variable) %>% summarise(mean = mean(value), median = median(value), .groups = "drop"),
+    aes(xintercept = median),
+    linetype = "solid",
+    color = "darkgreen",
+    linewidth = 0.7
+  ) +
+  facet_wrap(~ variable, scales = "free", ncol = 2) +
+  labs(
+    title = "Univariate Profiles: Distribution of Numeric Variables",
+    subtitle = "Red dashed line = mean; green solid line = median",
+    x = NULL,
+    y = "Density"
+  ) +
+  theme_storytelling
+```
+
+**Summary of Observations and Implications**: Arrival delay is centered around 70 minutes, with a mean of 69.8 and a maximum of 180. `Weather` only takes values 5 and 6 in this dataset, so it represents limited variation rather than the full 0-10 scale described in the data dictionary. `Support_Crew_Available` varies widely, while `Baggage_loading_time` and `Late_Arrival_o` are more tightly concentrated. These patterns suggest that modeling should focus on operational predictors with meaningful variation and should verify whether the weather scale was filtered or truncated.
+
+### Distribution of Airline Carriers
+
+The carrier variable defines the airline groups used for comparison. The dataset is not evenly balanced across carriers.
+
+```{r fig.align='center', fig.height=6, fig.width=8}
+ggplot(df, aes(y = fct_rev(fct_infreq(Carrier)))) +
+  geom_bar(fill = "coral", alpha = 0.8, width = 0.7) +
+  geom_text(stat = "count", aes(label = after_stat(count)), hjust = -0.2, size = 3.5) +
+  labs(
+    title = "Carrier Frequency Counts",
+    subtitle = "Large carriers dominate the dataset; small carriers should be interpreted cautiously",
+    x = "Number of Observations",
+    y = "Carrier"
+  ) +
+  theme_storytelling
+```
+
+**Summary of Observations and Implications**: UA and B6 have the most records, with 729 and 692 observations. Several carriers have very small sample sizes, including HA with 4 records, F9 with 8, and AS with 10. Carrier-level comparisons should therefore emphasize both mean delay and sample size. Very small carrier groups should not be overinterpreted because a few flights can strongly influence their averages.
+
+## Relationships Between Variables
+
+### Correlation and Trend Discovery
+
+The correlation plot identifies which numeric predictors move most closely with arrival delay. This is useful for selecting variables for future regression or machine-learning models.
+
+```{r fig.align='center', fig.width=8, fig.height=6}
+corr_df <- df %>%
+  select(where(is.numeric)) %>%
+  cor()
+
+arr_corr <- corr_df[, "Arr_Delay"] %>%
+  sort(decreasing = TRUE) %>%
+  as.data.frame() %>%
+  rownames_to_column("variable") %>%
+  rename(correlation = ".") %>%
+  filter(variable != "Arr_Delay") %>%
+  mutate(label_hjust = if_else(correlation > 0, -0.1, 1.1))
+
+ggplot(arr_corr, aes(x = reorder(variable, correlation), y = correlation, fill = correlation > 0)) +
+  geom_col(alpha = 0.85) +
+  geom_text(aes(label = round(correlation, 3), hjust = label_hjust), size = 3.5) +
+  coord_flip() +
+  scale_fill_manual(values = c("TRUE" = "steelblue", "FALSE" = "firebrick"), guide = "none") +
+  labs(
+    title = "Correlation of Numeric Predictors with Arrival Delay",
+    subtitle = "Number of flights, baggage loading time, and late-arriving aircraft time show the strongest positive associations",
+    x = NULL,
+    y = "Pearson correlation with Arr_Delay"
+  ) +
+  theme_storytelling
+```
+
+**Summary of Observations and Implications**: The strongest positive correlations with arrival delay are `Number_of_flights` (0.823), `Baggage_loading_time` (0.784), `Late_Arrival_o` (0.667), and `Airport_Distance` (0.482). `Support_Crew_Available` has a moderate negative relationship with delay (-0.362), supporting the hypothesis that higher crew availability is associated with shorter delays. `Cleaning_o` and `Fueling_o` have almost no linear association with arrival delay in this dataset.
+
+```{r fig.align='center', fig.width=9, fig.height=7}
+df %>%
+  select(Arr_Delay, Number_of_flights, Baggage_loading_time, Late_Arrival_o, Airport_Distance, Support_Crew_Available) %>%
+  ggpairs(
+    lower = list(continuous = wrap("smooth", method = "loess", se = TRUE, alpha = 0.25, color = "steelblue")),
+    diag = list(continuous = wrap("barDiag", fill = "skyblue", alpha = 0.6)),
+    upper = list(continuous = wrap("cor", size = 4, color = "darkred"))
+  ) +
+  theme_storytelling
+```
+
+### Comparing Arrival Delay Across Carriers
+
+Carrier comparisons help determine whether delay patterns differ by airline group. Because sample sizes vary widely, this chart includes the full distribution rather than only averages.
+
+```{r fig.align='center', fig.width=9, fig.height=6}
+carrier_order <- df %>%
+  group_by(Carrier) %>%
+  summarise(median_delay = median(Arr_Delay), n = n(), .groups = "drop") %>%
+  arrange(median_delay)
+
+ggplot(df, aes(x = fct_reorder(Carrier, Arr_Delay, median), y = Arr_Delay, fill = Carrier)) +
+  geom_violin(trim = FALSE, alpha = 0.65) +
+  geom_boxplot(width = 0.12, fill = "white", alpha = 0.85, outlier.alpha = 0.35) +
+  labs(
+    title = "Arrival Delay Distribution by Carrier",
+    subtitle = "Small carrier groups should be interpreted cautiously because sample sizes are uneven",
+    x = "Carrier",
+    y = "Arrival Delay (minutes)"
+  ) +
+  theme_storytelling +
+  theme(legend.position = "none")
+```
+
+**Summary of Observations and Implications**: Average carrier delays are relatively close for the largest carriers, generally near 68-71 minutes. HA has the highest mean delay at 84.5 minutes, but it has only 4 records, so that estimate is unstable. WN has the lowest mean delay among carriers with more than 100 records, averaging about 60.1 minutes. Future modeling can include carrier as a categorical predictor, but small carriers may need to be grouped or interpreted with caution.
+
+### Operational Drivers of Arrival Delay
+
+The following scatterplots focus on the most important operational predictors. The purpose is to see whether the relationships are approximately linear or whether there are thresholds and nonlinear patterns.
+
+```{r fig.align='center', fig.width=10, fig.height=8}
+key_predictors <- c("Number_of_flights", "Baggage_loading_time", "Late_Arrival_o", "Airport_Distance", "Support_Crew_Available", "Weather")
+
+df %>%
+  pivot_longer(all_of(key_predictors), names_to = "predictor", values_to = "value") %>%
+  ggplot(aes(x = value, y = Arr_Delay)) +
+  geom_point(alpha = 0.25, color = "grey35") +
+  geom_smooth(method = "loess", se = TRUE, color = "steelblue") +
+  facet_wrap(~ predictor, scales = "free_x", ncol = 2) +
+  labs(
+    title = "Arrival Delay Against Key Operational Predictors",
+    subtitle = "LOESS curves highlight the direction and shape of each relationship",
+    x = NULL,
+    y = "Arrival Delay (minutes)"
+  ) +
+  theme_storytelling
+```
+
+**Summary of Observations and Implications**: Arrival delay rises clearly as airport flight volume, baggage loading time, late-arriving aircraft time, and airport distance increase. The negative pattern for support crew suggests staffing is a practical lever: more crew availability is associated with lower arrival delays. Weather also has a positive relationship, but in this dataset the variable is limited to levels 5 and 6, so it provides less detail than expected from a 0-10 scale.
+
+# Effective Visual Storytelling: From Insights to Action
+
+## How to Use Visual Insights to Support Business Decisions
+
+**Decision on Airport Workload Management**: The strongest relationship with arrival delay is `Number_of_flights`. Recommendation: prioritize delay-prevention resources during high-volume periods, including gate coordination, baggage staffing, and turnaround monitoring.
+
+**Decision on Baggage and Turnaround Operations**: `Baggage_loading_time` and `Late_Arrival_o` are strongly associated with arrival delay. Recommendation: monitor baggage loading and incoming-aircraft lateness as early warning indicators for downstream delay risk.
+
+**Decision on Support Crew Staffing**: `Support_Crew_Available` has a moderate negative association with arrival delay. Recommendation: test whether adding support crew during high-volume or high-risk periods reduces average arrival delay.
+
+**Decision on Data Quality**: The negative value in `Cleaning_o` should be investigated before formal modeling. Recommendation: confirm whether negative cleaning time is a data-entry error, a relative-time code, or a valid operational convention.
+
+## How to Use Visual Findings to Inform Subsequent Data Analysis and Modeling
+
+**Feature Engineering**: Create high-volume indicators for `Number_of_flights`, staffing ratio features such as support crew per flight volume, and interaction terms between support crew and airport workload.
+
+**Model Selection**: Linear regression can provide an interpretable baseline because several relationships are strong and monotonic. Tree-based models such as random forests or gradient boosting can be used next to capture nonlinear effects and interactions.
+
+**Handling Missing Data**: No missing-value imputation is required. The primary preprocessing issue is checking and possibly correcting implausible negative cleaning times.
+
+**Hypothesis Validation**: The visual evidence supports H1, H2, and H3. Formal follow-up can use multiple regression with `Arr_Delay` as the dependent variable and carrier fixed effects to estimate the effect of each operational predictor while controlling for the others.
+
+## Dashboard and Real-Time Monitoring Implementation
+
+A practical dashboard could be organized into three tabs:
+
+**Tab 1: Data Health**: Missing-value checks, numeric range checks, and alerts for impossible values such as negative operational times.
+
+**Tab 2: Delay Drivers**: Live visualizations of arrival delay against flight volume, baggage loading time, late-arriving aircraft time, and support crew availability.
+
+**Tab 3: Carrier and Operations Comparison**: Carrier-level delay distributions with sample sizes, plus operational drill-downs for high-delay segments.
+
+This project shows that effective visualization is not only about describing flight delays; it is about identifying operational levers that airlines and airports can monitor to reduce those delays.
